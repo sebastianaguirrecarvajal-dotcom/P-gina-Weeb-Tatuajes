@@ -25,14 +25,15 @@ function newToken(): string {
 export async function startClientSession(fullName: string, phone?: string) {
   const name = fullName.trim().replace(/\s+/g, " ");
 
-  // Reutilizamos un Client con el mismo nombre si existe; si no, lo creamos.
-  // En V1 el nombre es el identificador de arranque de la experiencia.
-  let client = await prisma.client.findFirst({ where: { fullName: name } });
-  if (!client) {
-    client = await prisma.client.create({ data: { fullName: name, phone: phone || null } });
-  } else if (phone && !client.phone) {
-    client = await prisma.client.update({ where: { id: client.id }, data: { phone } });
-  }
+  // SEGURIDAD: creamos SIEMPRE una identidad nueva. NO reutilizamos un Client
+  // por nombre, porque eso permitiría que cualquiera accediera al historial de
+  // otra persona simplemente escribiendo su nombre. La identidad del cliente es
+  // la SESIÓN (cookie), no el nombre; éste es sólo una etiqueta para esa sesión.
+  // (Una futura verificación —p. ej. OTP por WhatsApp— permitirá reagrupar con
+  // seguridad varias sesiones bajo una misma persona.)
+  const client = await prisma.client.create({
+    data: { fullName: name, phone: phone || null },
+  });
 
   const token = newToken();
   await prisma.clientSession.create({ data: { token, clientId: client.id } });
