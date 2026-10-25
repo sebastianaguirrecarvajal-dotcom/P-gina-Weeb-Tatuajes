@@ -21,6 +21,15 @@ export interface Interval {
   end: Date;
 }
 
+/// Detecta la violación de la constraint EXCLUDE `booking_no_overlap` de
+/// PostgreSQL (código SQLSTATE 23P01). Es la última línea de defensa frente a
+/// dos reservas simultáneas sobre el mismo hueco.
+export function isOverlapConstraintError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  const code = (err as { code?: string } | null)?.code;
+  return code === "23P01" || msg.includes("booking_no_overlap") || msg.includes("23P01");
+}
+
 export interface Slot {
   start: Date;
   end: Date;

@@ -7,8 +7,11 @@
 //    aquí; no existe un calendario paralelo.
 //  - Diseñado para UN tatuador (singleton Studio), pero con claves foráneas y
 //    tablas (Category) que permiten crecer sin reconstruir.
-//  - SQLite para la V1: no hay enums nativos ni arrays, por eso usamos String
-//    con valores documentados y campos JSON serializados como String.
+//  - PostgreSQL en producción. Mantenemos los estados como String con valores
+//    documentados (y los arrays como JSON serializado) para no alterar la
+//    lógica existente durante la migración; la integridad de solapamiento de
+//    reservas se refuerza a nivel de BD con una constraint EXCLUDE (ver la
+//    migración `..._booking_overlap_exclusion`), que PostgreSQL sí soporta.
 // ---------------------------------------------------------------------------
 
 generator client {
@@ -16,8 +19,13 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  // Conexión de la app. En producción serverless (Vercel) conviene que apunte
+  // a un pooler (PgBouncer): p. ej. el puerto 6543 de Supabase/Neon.
+  url       = env("DATABASE_URL")
+  // Conexión directa (sin pooler) usada por `prisma migrate` para ejecutar DDL.
+  // En local puede ser igual a DATABASE_URL.
+  directUrl = env("DIRECT_URL")
 }
 
 /// Perfil del tatuador + estudio + autenticación. Singleton en la V1.

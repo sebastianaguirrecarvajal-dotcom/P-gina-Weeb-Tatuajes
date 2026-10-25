@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/db";
 import { requireArtist } from "@/lib/admin";
-import { isIntervalBookable } from "@/lib/availability";
+import { isOverlapConstraintError } from "@/lib/availability";
 import { stringifyArray } from "@/lib/json";
 import { createNotification } from "@/lib/notifications";
 import { BOOKING_STATUS } from "@/lib/constants";
@@ -39,7 +39,14 @@ export async function updateBookingStatusAction(fd: FormData) {
   const booking = await prisma.booking.findFirst({ where: { id, studioId: studio.id } });
   if (!booking) throw new Error("Reserva no encontrada");
 
-  await prisma.booking.update({ where: { id }, data: { status } });
+  try {
+    await prisma.booking.update({ where: { id }, data: { status } });
+  } catch (err) {
+    if (isOverlapConstraintError(err)) {
+      throw new Error("Ese horario ya está ocupado por otra cita; no se puede reactivar.");
+    }
+    throw err;
+  }
 
   // Notificación al cliente según el nuevo estado (arquitectura preparada).
   const map: Record<string, { type: any; title: string }> = {
@@ -95,19 +102,24 @@ export async function createManualBookingAction(fd: FormData) {
   });
   if (busy) throw new Error("Esa franja ya está ocupada");
 
-  await prisma.booking.create({
-    data: {
-      studioId: studio.id,
-      clientName,
-      status: str(fd, "status") || "CONFIRMADA",
-      start,
-      end,
-      style: str(fd, "style") || null,
-      bodyZone: str(fd, "bodyZone") || null,
-      idea: str(fd, "idea") || null,
-      contactSource: "ADMIN",
-    },
-  });
+  try {
+    await prisma.booking.create({
+      data: {
+        studioId: studio.id,
+        clientName,
+        status: str(fd, "status") || "CONFIRMADA",
+        start,
+        end,
+        style: str(fd, "style") || null,
+        bodyZone: str(fd, "bodyZone") || null,
+        idea: str(fd, "idea") || null,
+        contactSource: "ADMIN",
+      },
+    });
+  } catch (err) {
+    if (isOverlapConstraintError(err)) throw new Error("Esa franja ya está ocupada");
+    throw err;
+  }
   revalidatePath("/admin/agenda");
   revalidatePath("/admin/reservas");
 }
@@ -134,7 +146,12 @@ export async function rescheduleBookingAction(fd: FormData) {
   });
   if (busy) throw new Error("Esa franja ya está ocupada");
 
-  await prisma.booking.update({ where: { id }, data: { start, end, status: "REPROGRAMADA" } });
+  try {
+    await prisma.booking.update({ where: { id }, data: { start, end, status: "REPROGRAMADA" } });
+  } catch (err) {
+    if (isOverlapConstraintError(err)) throw new Error("Esa franja ya está ocupada");
+    throw err;
+  }
   await createNotification({
     type: "BOOKING_RESCHEDULED",
     audience: "CLIENT",

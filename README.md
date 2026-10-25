@@ -12,21 +12,37 @@ Esta es la **primera versión** (punto de partida), construida para evolucionar.
 ## Stack técnico
 
 - **Next.js 14 (App Router) + TypeScript** — SSR para SEO y rutas de API.
-- **Prisma + SQLite** — base de datos cero-configuración en desarrollo
-  (sustituible por Postgres/MySQL en producción cambiando `datasource`).
+- **Prisma + PostgreSQL** — base de datos relacional lista para producción.
 - **Tailwind CSS** — estética oscura tipo estudio (tinta + dorado).
 - **jose + bcryptjs** — autenticación segura del tatuador (JWT en cookie
   httpOnly).
 
-## Puesta en marcha
+## Requisitos
+
+- Node.js 18+
+- Una base de datos **PostgreSQL** (local o gestionada: Supabase, Neon, RDS…).
+
+## Puesta en marcha (desarrollo)
 
 ```bash
-cp .env.example .env     # ajusta AUTH_SECRET y credenciales de admin
+cp .env.example .env     # define DATABASE_URL/DIRECT_URL, AUTH_SECRET y admin
 npm install
-npm run db:push          # crea el esquema en SQLite
-npm run db:seed          # datos de demostración
+
+# Opción A (recomendada): aplicar las migraciones versionadas
+npm run db:migrate:deploy   # crea el esquema ejecutando prisma/migrations
+npm run db:seed             # datos de demostración
+
+# Opción B: reconstruir desde cero (reset + migraciones + seed)
+npm run db:reset
+
 npm run dev              # http://localhost:3000
 ```
+
+> PostgreSQL local rápido (ejemplo):
+> ```bash
+> createdb estudio
+> # DATABASE_URL="postgresql://<usuario>@localhost:5432/estudio?schema=public"
+> ```
 
 **Acceso del tatuador** (del seed): `/admin/login`
 - Email: `tatuador@estudio.demo`
@@ -62,7 +78,57 @@ src/
                        clientes, catalogo, blog, faq, testimonios, configuracion
     api/               availability, bookings, favorites, testimonials, upload
   middleware.ts        Protege /admin/* (defensa en profundidad)
+prisma/migrations/     Migraciones SQL versionadas de PostgreSQL
 ```
+
+## Base de datos y migraciones
+
+El proyecto usa **PostgreSQL** mediante Prisma, con **migraciones versionadas**
+en `prisma/migrations/` (no dependemos de `db push` en producción).
+
+Flujo recomendado:
+
+| Entorno | Comando | Qué hace |
+| --- | --- | --- |
+| Desarrollo | `npm run db:migrate` | Crea/aplica una nueva migración (`prisma migrate dev`) tras cambiar `schema.prisma`. |
+| Desarrollo | `npm run db:reset` | Recrea la BD, aplica todas las migraciones y ejecuta el seed. |
+| Producción | `npm run db:migrate:deploy` | Aplica las migraciones pendientes (`prisma migrate deploy`), sin tocar datos. |
+
+Migraciones incluidas:
+1. `init` — todas las entidades y relaciones.
+2. `booking_overlap_exclusion` — activa `btree_gist` y añade una **constraint
+   `EXCLUDE`** que impide, a nivel de base de datos, dos reservas/citas
+   solapadas en el mismo estudio mientras su estado ocupe la agenda (los
+   estados `CANCELADA`/`RECHAZADA` quedan excluidos, liberando el hueco).
+
+### Integridad de reservas (concurrencia)
+
+Tres capas garantizan que dos clientes no obtengan el mismo horario:
+1. Comprobación de disponibilidad en servidor (`availability.ts`).
+2. Re-verificación de solapamiento **dentro de una transacción** antes de
+   insertar (`/api/bookings`).
+3. **Backstop de PostgreSQL**: la constraint `EXCLUDE` rechaza la inserción
+   solapada aunque dos peticiones lleguen en el mismo instante; la app la
+   traduce a un `409` limpio (`isOverlapConstraintError`).
+
+## Despliegue (Vercel + PostgreSQL)
+
+El proyecto está preparado para Vercel con una base PostgreSQL gestionada:
+
+1. **Base de datos**: crea una instancia (Supabase, Neon, RDS…).
+2. **Variables de entorno** en Vercel: `DATABASE_URL` (idealmente la cadena
+   *pooled* / PgBouncer para serverless), `DIRECT_URL` (conexión directa para
+   migraciones), `AUTH_SECRET`, `NEXT_PUBLIC_SITE_URL`.
+3. **Migraciones**: ejecuta `npm run db:migrate:deploy` en el paso de build o
+   como comando posterior (o manualmente con la `DIRECT_URL`). El seed es
+   opcional y solo para entornos de demostración.
+4. `npm run build` genera el cliente de Prisma (`prisma generate`) y compila
+   Next.js. API routes, server actions y la sesión (cookie httpOnly) funcionan
+   en el runtime de Node de Vercel sin cambios.
+
+> **Pooling**: en serverless conviene limitar conexiones. Usa la URL *pooled*
+> del proveedor en `DATABASE_URL` (p. ej. puerto `6543` + `?pgbouncer=true`) y
+> reserva `DIRECT_URL` para las migraciones.
 
 ## Decisiones técnicas importantes
 
@@ -110,8 +176,12 @@ src/
 - **Notificaciones**: se persisten en BD (canal INAPP, visibles en el panel).
   El envío por email/WhatsApp/SMS se conecta implementando `dispatch()` en
   `lib/notifications.ts` con un proveedor real.
-- **Almacenamiento de imágenes**: hoy local; sustituir `api/upload` por
-  S3/R2/Cloudinary sin tocar el resto de la app.
+- **Almacenamiento de imágenes**: hoy local en `/public/uploads`. **Esto NO es
+  apto para producción en Vercel** (sistema de archivos efímero/de solo
+  lectura): las imágenes subidas se perderían. Debe sustituirse por un
+  almacenamiento persistente (**Supabase Storage, Cloudinary, S3 o Cloudflare
+  R2**) reescribiendo únicamente `src/app/api/upload/route.ts`; el resto de la
+  app trabaja con la URL devuelta, así que el catálogo no necesita cambios.
 - **Identidad del cliente**: sesión por cookie lista para añadir verificación.
 - **Zona horaria**: `Studio.timezone` guardado; el cálculo usa hora local del
   servidor (ver limitaciones).
@@ -123,11 +193,11 @@ src/
 - Multi-tatuador, roles de staff.
 - Editor de contenido enriquecido para el blog.
 
-## Limitaciones conocidas (V1)
+## Limitaciones conocidas
 - La disponibilidad se calcula con la hora local del servidor (no con zona
   horaria explícita por cliente).
-- SQLite es ideal para desarrollo; para producción conviene Postgres.
-- Las imágenes subidas se guardan en disco local (efímero en algunos hostings).
+- Las imágenes subidas se guardan en disco local: **pendiente** migrar a
+  almacenamiento persistente antes de desplegar (ver "Preparado").
 - Un único tramo horario por día (más un descanso); turnos partidos múltiples
   quedan para una iteración futura.
 

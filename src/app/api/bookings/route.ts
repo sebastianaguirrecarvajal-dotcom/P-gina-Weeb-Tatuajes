@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { getStudioOrThrow } from "@/lib/studio";
 import { getCurrentClient, startClientSession } from "@/lib/client-session";
-import { isIntervalBookable } from "@/lib/availability";
+import { isIntervalBookable, isOverlapConstraintError } from "@/lib/availability";
 import { bookingRequestSchema } from "@/lib/validation";
 import { OCCUPYING_STATUSES } from "@/lib/constants";
 import { stringifyArray } from "@/lib/json";
@@ -47,42 +47,55 @@ export async function POST(req: NextRequest) {
   // inserción ocurren dentro de una misma transacción. SQLite serializa las
   // escrituras, por lo que dos solicitudes simultáneas no pueden crear ambas
   // una reserva sobre el mismo hueco: la segunda ve la primera y se rechaza.
-  const booking = await prisma.$transaction(async (tx) => {
-    const clash = await tx.booking.findFirst({
-      where: {
-        studioId: studio.id,
-        status: { in: OCCUPYING_STATUSES },
-        start: { lt: end },
-        end: { gt: start },
-      },
-      select: { id: true },
-    });
-    if (clash) return null;
-    const blockClash = await tx.timeBlock.findFirst({
-      where: { studioId: studio.id, start: { lt: end }, end: { gt: start } },
-      select: { id: true },
-    });
-    if (blockClash) return null;
+  let booking;
+  try {
+    booking = await prisma.$transaction(async (tx) => {
+      const clash = await tx.booking.findFirst({
+        where: {
+          studioId: studio.id,
+          status: { in: OCCUPYING_STATUSES },
+          start: { lt: end },
+          end: { gt: start },
+        },
+        select: { id: true },
+      });
+      if (clash) return null;
+      const blockClash = await tx.timeBlock.findFirst({
+        where: { studioId: studio.id, start: { lt: end }, end: { gt: start } },
+        select: { id: true },
+      });
+      if (blockClash) return null;
 
-    return tx.booking.create({
-      data: {
-        studioId: studio.id,
-        clientId,
-        clientName: data.clientName.trim(),
-        clientPhone: data.clientPhone || null,
-        status: "SOLICITADA",
-        start,
-        end,
-        style: data.style,
-        bodyZone: data.bodyZone || null,
-        sizeApprox: data.sizeApprox || null,
-        idea: data.idea || null,
-        notes: data.notes || null,
-        referenceImages: stringifyArray(data.referenceImages ?? []),
-        contactSource: data.contactSource ?? "RESERVA",
-      },
+      return tx.booking.create({
+        data: {
+          studioId: studio.id,
+          clientId,
+          clientName: data.clientName.trim(),
+          clientPhone: data.clientPhone || null,
+          status: "SOLICITADA",
+          start,
+          end,
+          style: data.style,
+          bodyZone: data.bodyZone || null,
+          sizeApprox: data.sizeApprox || null,
+          idea: data.idea || null,
+          notes: data.notes || null,
+          referenceImages: stringifyArray(data.referenceImages ?? []),
+          contactSource: data.contactSource ?? "RESERVA",
+        },
+      });
     });
-  });
+  } catch (err) {
+    // Backstop de la BD: si dos solicitudes idénticas corren a la vez, la
+    // constraint EXCLUDE rechaza la segunda. La traducimos a un 409 limpio.
+    if (isOverlapConstraintError(err)) {
+      return NextResponse.json(
+        { error: "Ese horario acaba de ocuparse. Elige otro, por favor." },
+        { status: 409 }
+      );
+    }
+    throw err;
+  }
 
   if (!booking) {
     return NextResponse.json(
