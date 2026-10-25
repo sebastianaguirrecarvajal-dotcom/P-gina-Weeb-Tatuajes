@@ -111,24 +111,51 @@ Tres capas garantizan que dos clientes no obtengan el mismo horario:
    solapada aunque dos peticiones lleguen en el mismo instante; la app la
    traduce a un `409` limpio (`isOverlapConstraintError`).
 
-## Despliegue (Vercel + PostgreSQL)
+## Despliegue (Vercel + PostgreSQL + almacenamiento de objetos)
 
-El proyecto está preparado para Vercel con una base PostgreSQL gestionada:
+El proyecto está listo para Vercel. `vercel.json` fija el *Build Command* a
+`npm run vercel-build`, que ejecuta `prisma generate && prisma migrate deploy &&
+next build` — las migraciones se aplican en cada despliegue, sin `db push`.
 
-1. **Base de datos**: crea una instancia (Supabase, Neon, RDS…).
-2. **Variables de entorno** en Vercel: `DATABASE_URL` (idealmente la cadena
-   *pooled* / PgBouncer para serverless), `DIRECT_URL` (conexión directa para
-   migraciones), `AUTH_SECRET`, `NEXT_PUBLIC_SITE_URL`.
-3. **Migraciones**: ejecuta `npm run db:migrate:deploy` en el paso de build o
-   como comando posterior (o manualmente con la `DIRECT_URL`). El seed es
-   opcional y solo para entornos de demostración.
-4. `npm run build` genera el cliente de Prisma (`prisma generate`) y compila
-   Next.js. API routes, server actions y la sesión (cookie httpOnly) funcionan
-   en el runtime de Node de Vercel sin cambios.
+Pasos:
+
+1. **Base de datos**: crea una instancia PostgreSQL gestionada (Supabase, Neon,
+   RDS…).
+2. **Almacenamiento de imágenes**: crea un bucket compatible con S3 (ver abajo).
+3. **Variables de entorno** en Vercel (Project → Settings → Environment
+   Variables), copiadas de `.env.example`:
+   - `DATABASE_URL` — cadena *pooled* / PgBouncer (serverless).
+   - `DIRECT_URL` — conexión directa (la usa `migrate deploy`).
+   - `AUTH_SECRET` — secreto largo y aleatorio.
+   - `NEXT_PUBLIC_SITE_URL` — dominio público del sitio.
+   - `STORAGE_DRIVER=s3` + variables `S3_*` (ver abajo).
+4. **Deploy**: Vercel ejecuta `vercel-build` (genera Prisma, aplica migraciones,
+   compila). API routes, server actions y la sesión (cookie httpOnly) corren en
+   el runtime Node de Vercel sin cambios. El seed es opcional (solo demo) y se
+   ejecuta aparte con `npm run db:seed`.
 
 > **Pooling**: en serverless conviene limitar conexiones. Usa la URL *pooled*
 > del proveedor en `DATABASE_URL` (p. ej. puerto `6543` + `?pgbouncer=true`) y
 > reserva `DIRECT_URL` para las migraciones.
+
+### Almacenamiento de imágenes (persistente)
+
+`src/lib/storage.ts` abstrae el almacenamiento con dos drivers seleccionables
+por entorno; **la app solo maneja la URL pública devuelta**, así que cambiar de
+proveedor no toca el catálogo, el blog ni el panel:
+
+- `STORAGE_DRIVER=local` (por defecto en desarrollo) → `/public/uploads`.
+  **No apto para Vercel** (filesystem efímero): úsalo solo en local.
+- `STORAGE_DRIVER=s3` (producción) → cualquier almacenamiento **compatible con
+  S3**: AWS S3, **Cloudflare R2**, **Supabase Storage** (endpoint S3) o MinIO.
+
+Variables S3 (ver `.env.example` para los valores por proveedor):
+`S3_BUCKET`, `S3_REGION`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`,
+`S3_ENDPOINT` (vacío para AWS), `S3_FORCE_PATH_STYLE` (`true` para R2/Supabase/
+MinIO) y `S3_PUBLIC_BASE_URL` (dominio/CDN público del bucket).
+
+> `next.config.mjs` ya permite servir imágenes desde cualquier host `https`, por
+> lo que las URLs del bucket/CDN funcionan con `next/image` sin cambios.
 
 ## Decisiones técnicas importantes
 
@@ -176,12 +203,11 @@ El proyecto está preparado para Vercel con una base PostgreSQL gestionada:
 - **Notificaciones**: se persisten en BD (canal INAPP, visibles en el panel).
   El envío por email/WhatsApp/SMS se conecta implementando `dispatch()` en
   `lib/notifications.ts` con un proveedor real.
-- **Almacenamiento de imágenes**: hoy local en `/public/uploads`. **Esto NO es
-  apto para producción en Vercel** (sistema de archivos efímero/de solo
-  lectura): las imágenes subidas se perderían. Debe sustituirse por un
-  almacenamiento persistente (**Supabase Storage, Cloudinary, S3 o Cloudflare
-  R2**) reescribiendo únicamente `src/app/api/upload/route.ts`; el resto de la
-  app trabaja con la URL devuelta, así que el catálogo no necesita cambios.
+- **Almacenamiento de imágenes**: implementado con driver seleccionable
+  (`src/lib/storage.ts`). En desarrollo usa disco local; en producción usa
+  cualquier almacenamiento **compatible con S3** (AWS S3, Cloudflare R2,
+  Supabase Storage, MinIO) configurando las variables `S3_*`. Solo falta
+  **crear el bucket y poner las credenciales** en producción (ver "Despliegue").
 - **Identidad del cliente**: sesión por cookie lista para añadir verificación.
 - **Zona horaria**: `Studio.timezone` guardado; el cálculo usa hora local del
   servidor (ver limitaciones).
@@ -196,8 +222,8 @@ El proyecto está preparado para Vercel con una base PostgreSQL gestionada:
 ## Limitaciones conocidas
 - La disponibilidad se calcula con la hora local del servidor (no con zona
   horaria explícita por cliente).
-- Las imágenes subidas se guardan en disco local: **pendiente** migrar a
-  almacenamiento persistente antes de desplegar (ver "Preparado").
+- En desarrollo las imágenes se guardan en disco local; en producción se usa
+  almacenamiento S3 (requiere crear el bucket y configurar las credenciales).
 - Un único tramo horario por día (más un descanso); turnos partidos múltiples
   quedan para una iteración futura.
 
