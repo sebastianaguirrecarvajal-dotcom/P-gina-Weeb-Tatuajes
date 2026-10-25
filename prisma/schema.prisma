@@ -1,0 +1,281 @@
+// ---------------------------------------------------------------------------
+// Modelo de datos — Plataforma del estudio de tatuaje (V1)
+//
+// Principios:
+//  - Una única fuente de verdad para la disponibilidad: Booking + TimeBlock +
+//    WorkingHours. El calendario del cliente y la agenda del tatuador leen de
+//    aquí; no existe un calendario paralelo.
+//  - Diseñado para UN tatuador (singleton Studio), pero con claves foráneas y
+//    tablas (Category) que permiten crecer sin reconstruir.
+//  - SQLite para la V1: no hay enums nativos ni arrays, por eso usamos String
+//    con valores documentados y campos JSON serializados como String.
+// ---------------------------------------------------------------------------
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+/// Perfil del tatuador + estudio + autenticación. Singleton en la V1.
+model Studio {
+  id              String  @id @default(cuid())
+  // --- Autenticación del tatuador ---
+  email           String  @unique
+  passwordHash    String
+  // --- Identidad pública ---
+  artistName      String  @default("Nombre Artístico")
+  studioName      String  @default("Estudio de Tatuaje")
+  tagline         String  @default("Tatuajes con alma, hechos a mano.")
+  bio             String  @default("")
+  experience      String  @default("")
+  specialties     String  @default("[]") // JSON: string[]
+  location        String  @default("")
+  address         String  @default("")
+  avatarUrl       String?
+  heroImageUrl    String?
+  // --- Contacto ---
+  whatsappNumber  String  @default("") // formato internacional sin "+" ni espacios, ej: 34600000000
+  email_public    String  @default("")
+  instagram       String  @default("")
+  tiktok          String  @default("")
+  facebook        String  @default("")
+  website         String  @default("")
+  // --- Políticas de reserva (texto mostrado al cliente) ---
+  bookingPolicy   String  @default("")
+  // --- Parámetros de agenda ---
+  slotMinutes     Int     @default(30)  // granularidad de los huecos
+  timezone        String  @default("Europe/Madrid")
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  workingHours    WorkingHours[]
+  timeBlocks      TimeBlock[]
+  bookings        Booking[]
+}
+
+/// Horario laboral semanal. weekday: 0=domingo ... 6=sábado.
+model WorkingHours {
+  id        String  @id @default(cuid())
+  studioId  String
+  studio    Studio  @relation(fields: [studioId], references: [id], onDelete: Cascade)
+  weekday   Int
+  // Minutos desde medianoche (ej: 10:00 = 600). Permite 1 tramo por día en V1.
+  startMin  Int
+  endMin    Int
+  // Descanso opcional dentro del día (ej: comida).
+  breakStartMin Int?
+  breakEndMin   Int?
+  active    Boolean @default(true)
+
+  @@unique([studioId, weekday])
+}
+
+/// Bloqueo manual de tiempo (vacaciones, día libre, descanso puntual).
+model TimeBlock {
+  id        String   @id @default(cuid())
+  studioId  String
+  studio    Studio   @relation(fields: [studioId], references: [id], onDelete: Cascade)
+  start     DateTime
+  end       DateTime
+  reason    String   @default("")
+  createdAt DateTime @default(now())
+
+  @@index([studioId, start])
+}
+
+/// Cliente. Identificado por nombre completo en la V1 (sin contraseña).
+/// La sesión se gestiona con un token de cookie (ClientSession) para no exponer
+/// datos de un cliente a otro que conozca su nombre.
+model Client {
+  id         String   @id @default(cuid())
+  fullName   String
+  // Contacto opcional que el cliente puede dar al reservar (no obligatorio).
+  phone      String?
+  // Notas internas del tatuador. NUNCA se exponen al cliente.
+  internalNotes String @default("")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  sessions   ClientSession[]
+  bookings   Booking[]
+  favorites  Favorite[]
+  testimonials Testimonial[]
+
+  @@index([fullName])
+}
+
+/// Token de sesión del cliente (cookie httpOnly). Preparado para evolucionar a
+/// un mecanismo de identidad más robusto sin tocar el resto del modelo.
+model ClientSession {
+  id         String   @id @default(cuid())
+  token      String   @unique
+  clientId   String
+  client     Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+  lastSeenAt DateTime @default(now())
+}
+
+/// Reserva / cita. ÚNICA entidad que ocupa tiempo en la agenda.
+/// Una "solicitud" de cliente y una "cita" creada por el tatuador son el mismo
+/// registro en estados distintos — así la disponibilidad es consistente.
+model Booking {
+  id            String   @id @default(cuid())
+  studioId      String
+  studio        Studio   @relation(fields: [studioId], references: [id])
+  clientId      String?
+  client        Client?  @relation(fields: [clientId], references: [id])
+
+  // Nombre tal como se introdujo (resguardo si no hay Client vinculado).
+  clientName    String
+  clientPhone   String?
+
+  // Estado del flujo. Valores: SOLICITADA | EN_REVISION | ACEPTADA |
+  // CONFIRMADA | COMPLETADA | RECHAZADA | CANCELADA | REPROGRAMADA
+  status        String   @default("SOLICITADA")
+
+  // Franja horaria reservada (fuente de verdad de ocupación).
+  start         DateTime
+  end           DateTime
+
+  // --- Datos del proyecto de tatuaje (minimización de datos) ---
+  style         String?  // "BLANCO_Y_NEGRO" | "COLOR"
+  bodyZone      String?
+  sizeApprox    String?
+  idea          String?  // descripción libre de la idea
+  notes         String?  // comentarios adicionales del cliente
+  referenceImages String @default("[]") // JSON: string[] de URLs
+
+  // Trazabilidad del origen del contacto.
+  contactSource String  @default("WEB") // WEB | CATALOGO | TRABAJO | PUBLICACION | RESERVA | ADMIN
+
+  // Notas internas del tatuador sobre la cita. No visibles al cliente.
+  internalNotes String  @default("")
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([studioId, start])
+  @@index([clientId])
+  @@index([status])
+}
+
+/// Categoría del catálogo. V1 arranca con Blanco y Negro / Color, pero la tabla
+/// permite añadir más sin migración de interfaz.
+model Category {
+  id        String  @id @default(cuid())
+  slug      String  @unique // "blanco-y-negro" | "color"
+  name      String
+  order     Int     @default(0)
+  works     Work[]
+}
+
+/// Trabajo del catálogo / portafolio.
+model Work {
+  id          String   @id @default(cuid())
+  title       String
+  description String   @default("")
+  imageUrl    String
+  categoryId  String
+  category    Category @relation(fields: [categoryId], references: [id])
+  bodyZone    String?
+  tags        String   @default("[]") // JSON: string[]
+  published   Boolean  @default(true)
+  featured    Boolean  @default(false)
+  takenAt     DateTime?
+  order       Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  posts       Post[]
+  favorites   Favorite[]
+
+  @@index([categoryId])
+  @@index([published])
+}
+
+/// Publicación / blog.
+model Post {
+  id          String   @id @default(cuid())
+  slug        String   @unique
+  title       String
+  excerpt     String   @default("")
+  content     String   @default("") // texto/markdown ligero
+  coverUrl    String?
+  tags        String   @default("[]") // JSON: string[]
+  // Estado: DRAFT | PUBLISHED | HIDDEN
+  status      String   @default("DRAFT")
+  // Relación opcional con un trabajo del catálogo (evita duplicar imágenes).
+  workId      String?
+  work        Work?    @relation(fields: [workId], references: [id])
+  publishedAt DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([status])
+}
+
+/// Pregunta frecuente.
+model Faq {
+  id        String  @id @default(cuid())
+  question  String
+  answer    String
+  order     Int     @default(0)
+  published Boolean @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+/// Testimonio de cliente. Se solicita tras una cita COMPLETADA.
+model Testimonial {
+  id        String   @id @default(cuid())
+  clientId  String?
+  client    Client?  @relation(fields: [clientId], references: [id])
+  authorName String
+  rating    Int      @default(5)
+  content   String
+  // Estado: PENDING | APPROVED | HIDDEN
+  status    String   @default("PENDING")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+}
+
+/// Favoritos del cliente (asociados a su identidad/sesión).
+model Favorite {
+  id        String   @id @default(cuid())
+  clientId  String
+  client    Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  workId    String
+  work      Work     @relation(fields: [workId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([clientId, workId])
+}
+
+/// Notificación. Arquitectura preparada; el envío real (email/WhatsApp/SMS) se
+/// conecta más adelante mediante un proveedor. channel/status documentan el
+/// canal previsto y el estado de entrega.
+model Notification {
+  id         String   @id @default(cuid())
+  // Tipo de evento: NEW_BOOKING | BOOKING_ACCEPTED | BOOKING_REJECTED |
+  // BOOKING_CANCELLED | BOOKING_RESCHEDULED | REMINDER | NEW_POST | NEWS
+  type       String
+  // Destinatario previsto: ARTIST | CLIENT
+  audience   String
+  channel    String   @default("INAPP") // INAPP | EMAIL | WHATSAPP | SMS
+  title      String
+  body       String   @default("")
+  // Referencia opcional a la entidad relacionada (ej: bookingId).
+  refType    String?
+  refId      String?
+  status     String   @default("PENDING") // PENDING | SENT | READ | FAILED
+  createdAt  DateTime @default(now())
+
+  @@index([audience, status])
+}
