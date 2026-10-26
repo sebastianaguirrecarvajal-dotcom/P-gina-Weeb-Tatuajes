@@ -25,7 +25,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Formato no permitido" }, { status: 415 });
   }
   if (file.size > MAX_UPLOAD_BYTES) {
-    return NextResponse.json({ error: "Imagen demasiado grande (máx. 6 MB)" }, { status: 413 });
+    return NextResponse.json({ error: "Imagen demasiado grande (máx. 4 MB)" }, { status: 413 });
   }
 
   const bytes = Buffer.from(await file.arrayBuffer());

@@ -58,15 +58,17 @@ export default async function ClientePage({
   }
 
   // --- Con sesión: panel del cliente ---
-  const bookings = await prisma.booking.findMany({
-    where: { clientId: client.id },
-    orderBy: { start: "desc" },
-  });
-  const favorites = await prisma.favorite.findMany({
-    where: { clientId: client.id },
-    include: { work: { include: { category: true } } },
-    orderBy: { createdAt: "desc" },
-  });
+  const [bookings, favorites] = await Promise.all([
+    prisma.booking.findMany({
+      where: { clientId: client.id },
+      orderBy: { start: "desc" },
+    }),
+    prisma.favorite.findMany({
+      where: { clientId: client.id },
+      include: { work: { include: { category: true } } },
+      orderBy: { createdAt: "desc" },
+    }),
+  ]);
 
   const now = new Date();
   const upcoming = bookings.filter((b) => b.start >= now && !["CANCELADA", "RECHAZADA"].includes(b.status));

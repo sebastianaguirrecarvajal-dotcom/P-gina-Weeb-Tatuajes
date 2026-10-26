@@ -1,13 +1,16 @@
+import { cache } from "react";
 import { prisma } from "./db";
 import { parseStringArray } from "./json";
 
 // Acceso al Studio singleton (V1 = un único tatuador). Centralizado para poder
 // cachear o ampliar a multi-estudio en el futuro sin tocar las páginas.
-
-export async function getStudio() {
+//
+// React.cache deduplica la lectura dentro de un mismo request: aunque el layout
+// y la página llamen a getStudio(), se ejecuta una sola consulta por render.
+export const getStudio = cache(async () => {
   // En V1 tomamos el primer (único) estudio.
   return prisma.studio.findFirst();
-}
+});
 
 export async function getStudioOrThrow() {
   const studio = await getStudio();

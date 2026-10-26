@@ -43,10 +43,13 @@ export async function POST(req: NextRequest) {
   }
   const clientId = client.id;
 
-  // ATOMICIDAD: la comprobación de solapamiento con reservas/bloqueos y la
-  // inserción ocurren dentro de una misma transacción. SQLite serializa las
-  // escrituras, por lo que dos solicitudes simultáneas no pueden crear ambas
-  // una reserva sobre el mismo hueco: la segunda ve la primera y se rechaza.
+  // ATOMICIDAD: comprobamos el solapamiento con reservas/bloqueos y creamos la
+  // reserva dentro de una transacción. OJO: bajo PostgreSQL READ COMMITTED esta
+  // comprobación por sí sola NO evita una carrera entre dos solicitudes
+  // simultáneas; la GARANTÍA real de no-doble-reserva es la constraint EXCLUDE
+  // `booking_no_overlap` de la BD, cuya violación capturamos abajo como 409.
+  // La transacción + comprobación previa sirven para el camino común (devolver
+  // 409 sin tocar la BD) y para agrupar ambas operaciones.
   let booking;
   try {
     booking = await prisma.$transaction(async (tx) => {
@@ -94,7 +97,21 @@ export async function POST(req: NextRequest) {
         { status: 409 }
       );
     }
-    throw err;
+    // Errores transitorios de conexión/transacción (pool o timeout): pedir
+    // reintento en lugar de devolver un 500 opaco.
+    const code = (err as { code?: string } | null)?.code;
+    if (code && ["P2024", "P2028", "P2034"].includes(code)) {
+      console.error("Reserva: error transitorio de BD", code);
+      return NextResponse.json(
+        { error: "El servicio está ocupado. Vuelve a intentarlo en unos segundos." },
+        { status: 503 }
+      );
+    }
+    console.error("Reserva: error no esperado", err);
+    return NextResponse.json(
+      { error: "No se pudo registrar la solicitud. Inténtalo de nuevo." },
+      { status: 500 }
+    );
   }
 
   if (!booking) {

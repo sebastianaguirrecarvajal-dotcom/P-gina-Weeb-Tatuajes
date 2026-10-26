@@ -6,7 +6,10 @@ import { requireArtist } from "@/lib/admin";
 import { isOverlapConstraintError } from "@/lib/availability";
 import { stringifyArray } from "@/lib/json";
 import { createNotification } from "@/lib/notifications";
-import { BOOKING_STATUS } from "@/lib/constants";
+import { BOOKING_STATUS, OCCUPYING_STATUSES } from "@/lib/constants";
+
+// Estados válidos de testimonio (whitelist de integridad).
+const TESTIMONIAL_STATUSES = ["PENDING", "APPROVED", "HIDDEN"];
 
 // -------------------------------------------------------------------------
 // Todas las mutaciones del panel pasan por requireArtist() → sólo el tatuador
@@ -89,13 +92,14 @@ export async function createManualBookingAction(fd: FormData) {
 
   const start = new Date(startStr);
   const end = new Date(start.getTime() + durationMin * 60000);
+  if (isNaN(start.getTime()) || !(start < end)) throw new Error("Rango de fecha/hora inválido");
 
   // El tatuador puede forzar sobre su propio horario aunque esté fuera de las
   // horas laborales, pero NO sobre una franja ya ocupada.
   const busy = await prisma.booking.findFirst({
     where: {
       studioId: studio.id,
-      status: { in: ["SOLICITADA", "EN_REVISION", "ACEPTADA", "CONFIRMADA", "COMPLETADA", "REPROGRAMADA"] },
+      status: { in: OCCUPYING_STATUSES },
       start: { lt: end },
       end: { gt: start },
     },
@@ -134,12 +138,13 @@ export async function rescheduleBookingAction(fd: FormData) {
 
   const start = new Date(startStr);
   const end = new Date(start.getTime() + durationMin * 60000);
+  if (isNaN(start.getTime()) || !(start < end)) throw new Error("Rango de fecha/hora inválido");
 
   const busy = await prisma.booking.findFirst({
     where: {
       studioId: studio.id,
       id: { not: id },
-      status: { in: ["SOLICITADA", "EN_REVISION", "ACEPTADA", "CONFIRMADA", "COMPLETADA", "REPROGRAMADA"] },
+      status: { in: OCCUPYING_STATUSES },
       start: { lt: end },
       end: { gt: start },
     },
@@ -316,9 +321,11 @@ export async function deleteFaqAction(fd: FormData) {
 
 export async function setTestimonialStatusAction(fd: FormData) {
   await requireArtist();
+  const status = str(fd, "status");
+  if (!TESTIMONIAL_STATUSES.includes(status)) throw new Error("Estado inválido");
   await prisma.testimonial.update({
     where: { id: str(fd, "id") },
-    data: { status: str(fd, "status") },
+    data: { status },
   });
   revalidatePath("/admin/testimonios");
 }

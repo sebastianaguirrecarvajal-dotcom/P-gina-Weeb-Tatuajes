@@ -19,7 +19,11 @@ import { randomBytes } from "crypto";
 // Si no se define STORAGE_DRIVER pero existen las variables S3, se usa "s3".
 // -----------------------------------------------------------------------------
 
-export const MAX_UPLOAD_BYTES = 6 * 1024 * 1024; // 6 MB
+// 4 MB: las funciones serverless de Vercel limitan el cuerpo de la petición a
+// ~4,5 MB, así que un tope mayor sería inalcanzable (Vercel devolvería 413
+// antes de llegar a la función). Para imágenes de más resolución, migrar a
+// subida firmada directa cliente→storage (ver README / FUTURO).
+export const MAX_UPLOAD_BYTES = 4 * 1024 * 1024; // 4 MB
 export const ALLOWED_MIME = [
   "image/jpeg",
   "image/png",

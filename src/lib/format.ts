@@ -1,13 +1,15 @@
-// Utilidades de formato de fecha/hora en español (es-ES).
+// Utilidades de formato de fecha/hora en español (Colombia, es-CO).
+// La zona horaria la toma del runtime (variable TZ, p. ej. America/Bogota en
+// Vercel), de modo que fechas y horas se muestran en hora local del estudio.
 
-const DATE_FMT = new Intl.DateTimeFormat("es-ES", {
+const DATE_FMT = new Intl.DateTimeFormat("es-CO", {
   weekday: "long",
   day: "numeric",
   month: "long",
   year: "numeric",
 });
 
-const DATETIME_FMT = new Intl.DateTimeFormat("es-ES", {
+const DATETIME_FMT = new Intl.DateTimeFormat("es-CO", {
   day: "2-digit",
   month: "2-digit",
   year: "numeric",
@@ -15,7 +17,7 @@ const DATETIME_FMT = new Intl.DateTimeFormat("es-ES", {
   minute: "2-digit",
 });
 
-const TIME_FMT = new Intl.DateTimeFormat("es-ES", {
+const TIME_FMT = new Intl.DateTimeFormat("es-CO", {
   hour: "2-digit",
   minute: "2-digit",
 });

@@ -47,11 +47,11 @@ async function main() {
       bio: "Tatuadora especializada en trabajo fino en blanco y negro y en piezas de color vibrante. Más de 8 años dando forma a ideas sobre la piel, con un enfoque en el detalle, la higiene y una experiencia cercana.",
       experience: "+8 años de experiencia · +1.500 piezas realizadas",
       specialties: JSON.stringify(["Fine line", "Blackwork", "Color ilustrativo", "Lettering"]),
-      location: "Madrid, España",
-      address: "Calle del Arte 12, bajo. 28012 Madrid",
+      location: "Bogotá, Colombia",
+      address: "Carrera 13 #85-32, Chapinero. Bogotá",
       avatarUrl: IMG.avatar,
       heroImageUrl: IMG.hero,
-      whatsappNumber: "34600111222",
+      whatsappNumber: "573001112233",
       email_public: "hola@agujanegra.demo",
       instagram: "https://instagram.com/agujanegra.demo",
       tiktok: "https://tiktok.com/@agujanegra.demo",
@@ -60,7 +60,7 @@ async function main() {
       bookingPolicy:
         "Para reservar se requiere confirmar la cita por WhatsApp. La señal no es reembolsable pero se descuenta del total. Avisa con 48h de antelación para reprogramar.",
       slotMinutes: 30,
-      timezone: "Europe/Madrid",
+      timezone: "America/Bogota",
     },
   });
 
@@ -217,7 +217,7 @@ async function main() {
 
   console.log("→ Clientes y reservas de ejemplo...");
   const ana = await prisma.client.create({
-    data: { fullName: "Ana López", phone: "34600333444", internalNotes: "Alérgica al látex. Preferir guantes de nitrilo." },
+    data: { fullName: "Ana López", phone: "573002223344", internalNotes: "Alérgica al látex. Preferir guantes de nitrilo." },
   });
   const carlos = await prisma.client.create({
     data: { fullName: "Carlos Ruiz" },
