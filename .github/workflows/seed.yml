@@ -1,0 +1,51 @@
+name: Seed Database
+
+# Ejecuta el seed de datos iniciales (perfil del estudio, admin, categorías y
+# contenido de demostración) contra la base de datos de producción (Supabase).
+#
+# SOLO se lanza manualmente (workflow_dispatch), nunca en cada push, porque el
+# seed hace un RESET: borra y recrea los datos de demostración. Úsalo para el
+# arranque inicial o cuando quieras restaurar los datos demo a propósito.
+#
+# Requiere 3 secrets en el repositorio (Settings → Secrets and variables →
+# Actions → New repository secret):
+#   SEED_DATABASE_URL   → cadena de conexión directa de Supabase (Session pooler,
+#                         puerto 5432; la misma que usas como DIRECT_URL).
+#   SEED_ADMIN_EMAIL    → email de acceso del tatuador (p. ej. tatuador@estudio.demo).
+#   SEED_ADMIN_PASSWORD → contraseña de acceso del tatuador.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  seed:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Prisma generate
+        run: npx prisma generate
+
+      - name: Apply migrations (idempotente)
+        run: npx prisma migrate deploy
+        env:
+          DATABASE_URL: ${{ secrets.SEED_DATABASE_URL }}
+          DIRECT_URL: ${{ secrets.SEED_DATABASE_URL }}
+
+      - name: Run seed
+        run: npm run db:seed
+        env:
+          DATABASE_URL: ${{ secrets.SEED_DATABASE_URL }}
+          DIRECT_URL: ${{ secrets.SEED_DATABASE_URL }}
+          ADMIN_EMAIL: ${{ secrets.SEED_ADMIN_EMAIL }}
+          ADMIN_PASSWORD: ${{ secrets.SEED_ADMIN_PASSWORD }}
